@@ -893,7 +893,9 @@ final class BudgetDatabase: Sendable {
     }
 
     /// A month's income and spending for the accounts tab's summary group
-    /// (GH #256), on the same footing as the budget tab's Income and Spent.
+    /// (GH #256). Spent matches the budget tab's; Income deliberately does
+    /// not — it is the money the month can use, so income held for next
+    /// month moves to that month.
     struct AccountsMonthSummary: Equatable {
         var incomeCents = 0
         /// Spending sign-flipped to read as money out, so a normal month is
@@ -913,7 +915,7 @@ final class BudgetDatabase: Sendable {
 
     /// Income and spending for one "yyyy-MM" month.
     ///
-    /// Same scope as the budget month's income/spent so the two tabs agree
+    /// Same scope as the budget month's spent so the two tabs agree
     /// (GH #256): categorised transactions in on-budget accounts only, with
     /// hidden categories and hidden groups left out the way the budget tab's
     /// Income/Spent totals leave them out. Income is the income categories'
@@ -926,11 +928,20 @@ final class BudgetDatabase: Sendable {
     /// tombstones an account's transactions along with it, so a live
     /// transaction left on a tombstoned account is a sync-race orphan the
     /// all-accounts balance above the card doesn't count either.
+    ///
+    /// Envelope budgets hold income for next month (income categories with
+    /// carryover on, or a manual hold), so income is the month's activity
+    /// less what it held plus what the previous month held for it. With no
+    /// hold that is plain income. ponytail: the hold is one number from the
+    /// budget walk, so a hold from a hidden income category, or a manual hold
+    /// beyond the month's income, is netted as-is rather than apportioned.
     func fetchAccountsMonthSummary(
         month: String,
         excludingCategoryIds: Set<String> = []
     ) async throws -> AccountsMonthSummary {
         try await dbQueue.read { db in
+            let walk = try Self.budgetWalk(db, targetMonthInt: Self.monthStringToInt(month))
+            let heldDelta = walk.isEnvelope ? walk.summaryPriorBuffered - walk.summaryBuffered : 0
             // Categories the user left out of Spent drop out of expense only,
             // so Net stays Income less the Spent shown beside it, as the
             // Budget tab's Saved does.
@@ -963,7 +974,7 @@ final class BudgetDatabase: Sendable {
             }
             let income: Int = row["income"] ?? 0
             let expense: Int = row["expense"] ?? 0
-            return AccountsMonthSummary(incomeCents: income, expenseCents: expense)
+            return AccountsMonthSummary(incomeCents: income + heldDelta, expenseCents: expense)
         }
     }
 
@@ -2264,6 +2275,8 @@ final class BudgetDatabase: Sendable {
         let summaryLastMonthOverspent: Int
         let summaryBuffered: Int
         let summaryManualBuffered: Int
+        /// What the previous month held for this one (0 for tracking).
+        let summaryPriorBuffered: Int
         let incomeCatIds: Set<String>
         let categories: [CategoryRecord]
         let groups: [CategoryGroupRecord]
@@ -2412,6 +2425,7 @@ final class BudgetDatabase: Sendable {
         var summaryLastMonthOverspent = 0
         var summaryBuffered = 0
         var summaryManualBuffered = 0
+        var summaryPriorBuffered = 0
         var leftoverByMonthCat: [Int: [String: Int]] = [:]
 
         var m = earliestMonth
@@ -2443,6 +2457,7 @@ final class BudgetDatabase: Sendable {
                 let buffered = manualBuffered != 0 ? manualBuffered : bufferedAuto
                 runningToBudget = income + runningToBudget + priorBuffered
                     + lastMonthOverspent - budgetedTotal - buffered
+                if m == targetMonthInt { summaryPriorBuffered = priorBuffered }
                 priorBuffered = buffered
                 if m == targetMonthInt {
                     summaryIncome = income
@@ -2499,6 +2514,7 @@ final class BudgetDatabase: Sendable {
             summaryLastMonthOverspent: summaryLastMonthOverspent,
             summaryBuffered: summaryBuffered,
             summaryManualBuffered: summaryManualBuffered,
+            summaryPriorBuffered: summaryPriorBuffered,
             incomeCatIds: incomeCatIds,
             categories: categories,
             groups: groups

@@ -228,4 +228,86 @@ struct BudgetDatabaseAccountsSummaryTests {
         #expect(summary == BudgetDatabase.AccountsMonthSummary())
         #expect(summary.netCents == 0)
     }
+
+    // MARK: - Income held for next month
+
+    private func seedHeldIncome(_ db: BudgetDatabase, extra: String) async throws {
+        try await db.dbQueueForTesting.write { conn in
+            try conn.execute(sql: TestSchema.zeroBudgets)
+            try conn.execute(sql: TestSchema.zeroBudgetMonths)
+            try conn.execute(sql: """
+                INSERT INTO accounts (id, name, sort_order) VALUES ('acct-1', 'Checking', 1.0);
+                INSERT INTO transactions (id, acct, category, amount, date, tombstone) VALUES
+                    ('july-pay',  'acct-1', 'cat-salary', 400000, 20260725, 0),
+                    ('aug-pay',   'acct-1', 'cat-salary', 100000, 20260803, 0),
+                    ('aug-rent',  'acct-1', 'cat-rent',   -50000, 20260805, 0);
+            """)
+            try conn.execute(sql: extra)
+        }
+    }
+
+    @Test func incomeHeldLastMonthCountsInTheMonthItIsHeldFor() async throws {
+        let (db, url) = try await makeDatabase()
+        defer { cleanup(url) }
+        // July's salary is flagged to carry over, so it is August's income.
+        try await seedHeldIncome(db, extra: """
+            INSERT INTO zero_budgets (id, month, category, amount, carryover)
+            VALUES ('b1', 202607, 'cat-salary', 0, 1);
+        """)
+
+        let summary = try await db.fetchAccountsMonthSummary(month: "2026-08")
+        #expect(summary.incomeCents == 500_000)
+        #expect(summary.netCents == 450_000)
+
+        // July itself gave its salary away.
+        let july = try await db.fetchAccountsMonthSummary(month: "2026-07")
+        #expect(july.incomeCents == 0)
+    }
+
+    @Test func incomeHeldForNextMonthLeavesThisMonth() async throws {
+        let (db, url) = try await makeDatabase()
+        defer { cleanup(url) }
+        try await seedHeldIncome(db, extra: """
+            INSERT INTO zero_budgets (id, month, category, amount, carryover) VALUES
+                ('b1', 202607, 'cat-salary', 0, 1),
+                ('b2', 202608, 'cat-salary', 0, 1);
+        """)
+
+        let summary = try await db.fetchAccountsMonthSummary(month: "2026-08")
+        #expect(summary.incomeCents == 400_000)
+    }
+
+    @Test func manualHoldMovesTheHeldAmount() async throws {
+        let (db, url) = try await makeDatabase()
+        defer { cleanup(url) }
+        try await seedHeldIncome(db, extra: """
+            INSERT INTO zero_budget_months (id, buffered) VALUES ('2026-07', 300000);
+        """)
+
+        let summary = try await db.fetchAccountsMonthSummary(month: "2026-08")
+        #expect(summary.incomeCents == 400_000)
+    }
+
+    @Test func noHoldLeavesIncomeUnchanged() async throws {
+        let (db, url) = try await makeDatabase()
+        defer { cleanup(url) }
+        try await seedHeldIncome(db, extra: "")
+
+        let summary = try await db.fetchAccountsMonthSummary(month: "2026-08")
+        #expect(summary.incomeCents == 100_000)
+    }
+
+    @Test func trackingBudgetsIgnoreHolds() async throws {
+        let (db, url) = try await makeDatabase()
+        defer { cleanup(url) }
+        try await seedHeldIncome(db, extra: """
+            DROP TABLE zero_budgets;
+        """ + TestSchema.reflectBudgets + """
+            ;INSERT INTO reflect_budgets (id, month, category, amount, carryover)
+            VALUES ('b1', 202607, 'cat-salary', 0, 1);
+        """)
+
+        let summary = try await db.fetchAccountsMonthSummary(month: "2026-08")
+        #expect(summary.incomeCents == 100_000)
+    }
 }
