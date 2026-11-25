@@ -150,3 +150,49 @@ The user asked to start the work here, with proper branch names, and will take o
 - This plan: its own commit on `claude/happy-faraday-9y1w3i` only. It never enters the feature branches.
 - Order here: WP1 + WP2 + WP3 in parallel (disjoint files, interfaces fixed up front), then WP4 + WP5. WP6 (UI) and Gate G1 need Xcode and a phone and stay for the Mac.
 - A *Status* section at the end of the committed plan records what is done and what to run first.
+
+## Status at hand-off (2026-11-25)
+
+**Nothing below has been compiled, run, or passed through SwiftFormat.** It was written and then reviewed by reading only. Expect compile errors; the first job on the Mac is to build.
+
+| Branch | Holds | State |
+|---|---|---|
+| `feat/enable-banking-sync` | WP1, WP2, WP3 (PR 1) | Complete. Reviewed by reading; three test fixes applied. |
+| `feat/enable-banking-link` | PR 1 + WP4, WP5, WP6, WP7 (PR 2) | Plumbing (WP4, WP5) reviewed by reading; one test fix applied. The screen (WP6) is a first draft that was only skimmed. Contains one merge commit from the sync branch. |
+| `docs/enable-banking-website` | WP8 (PR 3) | Complete. |
+| `claude/happy-faraday-9y1w3i` | This plan | Not part of any PR. |
+
+All three feature branches are cut from upstream `main` at `ebdbb5d`.
+
+### First steps on the Mac
+
+1. `git fetch origin && git switch feat/enable-banking-sync`
+2. `swiftformat Actuali`, then build (command under *Verification*). Fix what the compiler reports and commit the fixes on this branch.
+3. `dev/scripts/sim-test.sh any -only-testing:ActualiTests/EnableBankingDownloadTests -only-testing:ActualiTests/BudgetStoreEnableBankingSyncTests`, then the existing `BudgetStoreBankSyncTests` and `ServerBankSyncDecodingTests` to confirm nothing regressed.
+4. End-to-end check for PR 1: an account linked through the web app syncs from "Sync from Bank".
+5. `git switch feat/enable-banking-link && git merge feat/enable-banking-sync`, format, build.
+6. `dev/scripts/sim-test.sh any -only-testing:ActualiTests/EnableBankingClientTests -only-testing:ActualiTests/BudgetStoreEnableBankingLinkTests -only-testing:ActualiTests/EnableBankingSyncViewTests -only-testing:ActualiTests/OpenIDAuthTests`
+7. Walk the screen in the simulator (Settings → Bank Sync → Enable Banking), then **Gate G1** on a phone with a real bank. G1 is still open and decides whether the no-URL-scheme approach is enough.
+8. Before each PR: full unit suite on `any` and `ios18`, `/code-review`, PR text.
+
+### Where to look first if it doesn't compile
+
+- `EnableBankingSyncView.swift`: the background-task expiry closure captures `self` and calls a view method (`endBackgroundTask`); the `Picker` with an optional `String` selection in `.navigationLink` style; `.task(id:)` on the country picker.
+- `BankSyncAccount.attentionMessage(status:source:)`: a `return switch` with `where` clauses on string patterns of a `String?`.
+- `EnableBankingProvider.download`: `switch` over an optional enum using `.account` / `.failure` / `nil` cases.
+- `EnableBankingClientTests`: `request.timeoutInterval == 280` assumes the stub sees the per-request timeout; if it fails, only that assertion is wrong.
+- Test fixtures build `EnableBankingBank`, `Account` and `BankSyncAccount` through memberwise initialisers.
+
+### Small departures from the plan
+
+- `not-configured` has one message for every source; the Enable Banking `reauth-required` message does not point at a screen, so it is true for PR 1 alone.
+- `BankRemoteAccountRow` lost its `private` so the new screen can reuse it.
+- `EnableBankingSyncView.psuType(for:choice:)` was added: a business-only bank would otherwise be sent `personal`.
+- `enableBankingStatus()` reuses the private `SimpleFINStatusResponse` (same shape).
+- A failed Enable Banking download still counts in `accountsSynced`, exactly as a failed SimpleFIN account already does. Left alone.
+
+### Known, not caused by this work
+
+- `python3 dev/scripts/validate-localization.py` fails on upstream `main` itself with five "missing catalog key for interpolated" errors. This work adds none.
+- New catalog entries carry `"extractionState" : "stale"`, copied from their neighbours, and sit at approximate sort positions. Xcode rewrites both on its next catalog save.
+- The existing `Bank` key is untranslated ("Bank") in es, fr, it and pt-BR; the new screen uses it as the bank picker's label.
