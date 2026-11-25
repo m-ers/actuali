@@ -74,7 +74,18 @@ const effectiveDate = "October 13, 2026";
         downloads your bank accounts, balances, and transactions. SimpleFIN
         handles that data under its own privacy policy. If you set up SimpleFIN
         on your Actual server instead, the app talks only to your Actual
-        server. No other network destinations are contacted by the app.
+        server.
+      </p>
+      <p class="text-neutral-700">
+        Enable Banking bank sync always runs through your Actual server, which
+        holds the Enable Banking credentials. The app asks your server for
+        your bank transactions and does not contact Enable Banking itself.
+        When you authorize a bank, the app opens the bank's sign-in page in a
+        browser sheet, so the browser connects to Enable Banking and your
+        bank just as it would from the Actual web app. The app never sees
+        your bank credentials; it keeps only the account identifiers your
+        server returns, in your budget. No other network destinations are
+        contacted by the app.
       </p>
       <p class="text-neutral-700">
         The developer of the app does not operate a server, does not see your
